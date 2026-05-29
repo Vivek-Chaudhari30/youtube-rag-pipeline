@@ -12,7 +12,7 @@ fastapi
 uvicorn
 pydantic
 python-dotenv
-google-api-python-client
+yt-dlp
 youtube-transcript-api
 sentence-transformers
 numpy

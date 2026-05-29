@@ -75,6 +75,7 @@ class SearchResponse(BaseModel):
     total_candidates: int
     total_chunks: int
     results: list[ChunkResult]
+    warning: str | None = None
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -130,12 +131,19 @@ def search(req: SearchRequest):
                 results=[],
             )
 
-        # Step 2: Download transcripts and chunk them
-        all_chunks = process_all_videos(candidates)
+        # Step 2: Download transcripts and chunk them (metadata fallback if captions blocked)
+        all_chunks, used_metadata = process_all_videos(candidates)
         if not all_chunks:
             raise HTTPException(
                 status_code=404,
-                detail="No transcripts available for any candidate video."
+                detail="No usable content found for any candidate video."
+            )
+
+        warning = None
+        if used_metadata:
+            warning = (
+                "YouTube is rate-limiting caption downloads right now. "
+                "Results are ranked from video titles and descriptions instead of full transcripts."
             )
 
         # Step 3: Embed all chunks
@@ -157,6 +165,7 @@ def search(req: SearchRequest):
             total_candidates=len(candidates),
             total_chunks=len(all_chunks),
             results=[ChunkResult(**r) for r in ranked],
+            warning=warning,
         )
 
     except HTTPException:

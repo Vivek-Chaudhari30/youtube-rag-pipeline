@@ -4,8 +4,7 @@ search.py
 Handles two things:
   1. Query expansion  - turns your one query into 3 related search phrases
                         so we fish a wider net on YouTube before semantic ranking.
-  2. YouTube search   - calls YouTube Data API v3 and returns a list of
-                        candidate videos (id, title, description, channelTitle).
+  2. YouTube search   - uses yt-dlp (no API key) to find candidate videos.
 
 Why expand queries?
   YouTube's search is keyword-based. If you type "sentiment analysis NLP",
@@ -14,13 +13,16 @@ Why expand queries?
   semantic stage to rank properly.
 """
 
-import os
-from googleapiclient.discovery import build
-from dotenv import load_dotenv
+import html
 
-load_dotenv()
+import yt_dlp
 
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+_YDL_OPTS = {
+    "quiet": True,
+    "no_warnings": True,
+    "extract_flat": "in_playlist",
+    "skip_download": True,
+}
 
 
 def expand_query(user_query: str) -> list[str]:
@@ -29,14 +31,6 @@ def expand_query(user_query: str) -> list[str]:
 
     This is a simple rule-based expander for the MVP.
     In Phase 2 you can replace this with an LLM call for smarter expansion.
-
-    Example:
-        Input : "NLP sentiment analysis project"
-        Output: [
-            "NLP sentiment analysis project tutorial",
-            "sentiment analysis python deployment tutorial",
-            "end to end NLP project flask"
-        ]
     """
     base = user_query.strip()
     expansions = [
@@ -49,35 +43,31 @@ def expand_query(user_query: str) -> list[str]:
 
 def search_youtube(query: str, max_results: int = 10) -> list[dict]:
     """
-    Search YouTube for a single query string.
+    Search YouTube for a single query string via yt-dlp (free, no API key).
+
     Returns a list of video dicts: {video_id, title, description, channel}.
-
-    max_results: how many videos per query phrase. With 3 expanded queries,
-                 you get up to 3 × max_results candidates before dedup.
     """
-    youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+    videos: list[dict] = []
 
-    request = youtube.search().list(
-        part="snippet",
-        q=query,
-        type="video",               # only actual videos, not playlists/channels
-        maxResults=max_results,
-        relevanceLanguage="en",     # prefer English results
-        videoDuration="medium",     # medium = 4–20 min, skips super short clips
-    )
-    response = request.execute()
+    with yt_dlp.YoutubeDL(_YDL_OPTS) as ydl:
+        info = ydl.extract_info(f"ytsearch{max_results}:{query}", download=False)
 
-    videos = []
-    for item in response.get("items", []):
-        video_id = item["id"]["videoId"]
-        snippet = item["snippet"]
-        videos.append({
-            "video_id": video_id,
-            "title": snippet.get("title", ""),
-            "description": snippet.get("description", ""),
-            "channel": snippet.get("channelTitle", ""),
-            "url": f"https://www.youtube.com/watch?v={video_id}",
-        })
+    for entry in info.get("entries") or []:
+        if not entry:
+            continue
+        video_id = entry.get("id")
+        if not video_id:
+            continue
+        videos.append(
+            {
+                "video_id": video_id,
+                "title": html.unescape(entry.get("title") or ""),
+                "description": html.unescape(entry.get("description") or ""),
+                "channel": entry.get("channel") or entry.get("uploader") or "",
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+            }
+        )
+
     return videos
 
 
@@ -95,8 +85,8 @@ def fetch_candidates(user_query: str, results_per_phrase: int = 10) -> list[dict
     for p in phrases:
         print(f"  → {p}")
 
-    seen_ids = set()
-    all_videos = []
+    seen_ids: set[str] = set()
+    all_videos: list[dict] = []
 
     for phrase in phrases:
         results = search_youtube(phrase, max_results=results_per_phrase)

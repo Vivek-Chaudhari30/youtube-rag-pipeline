@@ -291,7 +291,7 @@
 <div class="results" id="results"></div>
 
 <script>
-const API = "http://localhost:8000";
+const API = window.location.origin;
 
 function fillExample(el) {
   document.getElementById("query").value = el.textContent.trim();
@@ -351,6 +351,10 @@ async function doSearch() {
 
     const data = await resp.json();
     setStatus("Done!", false);
+
+    if (data.warning) {
+      showError(data.warning);
+    }
 
     // Meta row
     document.getElementById("m-candidates").textContent = data.total_candidates;
